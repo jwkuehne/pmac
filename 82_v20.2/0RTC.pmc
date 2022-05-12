@@ -1,0 +1,23 @@
+;----------------------------------------------------------------------------------
+;PLC0: Real time servo clock and average SuperTrack encoder position.
+;Application:	2.1M Telescope 
+;Author:	John Kuehne
+;April 7, 2020
+;
+;Description:  TRACK position, and average SuperTrack encoder position.
+;----------------------------------------------------------------------------------
+close
+del gat
+
+;----------------------------------------------------------------------------------
+#include "defines.txt"
+;----------------------------------------------------------------------------------
+
+OPEN PLC 0
+CLEAR
+
+P533  = M561; Capture time in milliseconds.
+P1005 = P1005 + M562; Divide P1005 by P1003*I0508*32 to give arcseconds
+P1000 = P1000 + 1; Divide P1005/(P1003*I0508*32) by P1000 to give average position.
+
+close

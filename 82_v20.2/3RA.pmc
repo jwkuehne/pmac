@@ -1,0 +1,70 @@
+;----------------------------------------------------------------------------------
+;PLC: RA Track, Guide, and Set
+;Application:	2.1M Telescope 
+;Author:	John Kuehne
+;January 23, 2020
+;
+;Description:  This PLC drives the RA motor at Track, Guide and Set rate.
+;----------------------------------------------------------------------------------
+close
+del gat
+
+;----------------------------------------------------------------------------------
+#include "defines.txt"
+;----------------------------------------------------------------------------------
+
+OPEN PLC 3
+CLEAR
+
+;----------------------------------------------------------------------------------
+;turn on/off tracking
+;----------------------------------------------------------------------------------
+if (ra_track_on=1 and ra_track_mask=0 and gate_track=1); test for track on
+   ra_track_mask=1; Cold Start spin-up.
+   M5197=I10; Make sure time base is reset - V16 used this control track rate.
+   if (ra_track_on=1)
+     cmd "#3j/&1B2R"; Prog 2 is MRA. Close servo loop, start motion program 2.
+   endif
+endif
+
+if (ra_track_on=0 or gate_track=0) and (ra_track_mask=1); End Track on command or safety code
+   cmd "&1A#3k"; Abort program and kill motor
+   dec_preload=0; turn off dec preload
+   ra_track_mask=0
+   ra_guide_mask=0;
+   ra_set_mask=0
+   SUBVERT=0;
+endif
+
+
+;----------------------------------------------------------------------------------
+; Console/Virtual Console control. Motion control program takes care of GUIDE and SET except for raw SET.
+;----------------------------------------------------------------------------------
+if (ceast^east^cwest^west = 1) and (ra_guide_mask < 1); X-or prevents Console/Virtual Console conflicts
+   if (guide+east+west>1 or cguide+ceast+cwest>1)
+      ra_guide_mask=1*gate_set;
+   endif
+   ; Set masks for RAE to control GUIDE and SET.
+   if (set+east+west>1 or cset+ceast+cwest>1) and (ra_mask = -1);
+      if (ra_track_on=1)
+        ra_guide_mask=2*gate_set; Set+track
+      else
+        ra_guide_mask=3*gate_set; Raw Set.
+      endif
+   endif
+   ; Only raw SET without track is handled here. Guide and SET+TRACK happens in motion control RAE.
+   if (ra_guide_mask=3); At this point there are no guide/set/direction/start-up and gate conflicts. Act.
+     ra_set_mask=west-east+cwest-ceast; Save direction for Output PLC to command Set motor.
+   endif
+endif
+
+
+;----------------------------------------------------------------------------------
+; End manually commanded motion or safety codes
+;----------------------------------------------------------------------------------
+if (ceast+east+cwest+west = 0 and ra_guide_mask > 0) or (gate_set=0)
+   ra_guide_mask=0; Permits re-entry to control.
+   ra_set_mask=0; Turns off Set motor in Output PLC
+endif
+
+close

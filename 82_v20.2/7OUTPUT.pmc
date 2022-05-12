@@ -1,0 +1,97 @@
+;----------------------------------------------------------------------------------
+;PLC:           output
+;Application:	2.1M Telescope 
+;Author:        John Kuehne
+;
+;Description:   set outputs
+;----------------------------------------------------------------------------------
+close
+del gat
+
+;----------------------------------------------------------------------------------
+#include "defines.txt"
+;----------------------------------------------------------------------------------
+
+OPEN PLC 7
+CLEAR
+
+;----------------------------------------------------------------------------------
+
+if (i5111<0); Track82 sets timer to activate motor.
+   focus_track82_in = 0; Timer expired, motor is off.
+   focus_track82_out= 0
+endif
+
+dog_scratch=(focus_in^focus_out); Prevent conflicts that could burn out focus ssr.
+in_focus  =  focus_in&dog_scratch
+out_focus = focus_out&dog_scratch
+
+dog_scratch=(gate_dome*((dome_left)^(dome_right))); Prevent conflicts that could burn out dome ssr.
+left_dome  =  dome_left&dog_scratch
+right_dome = dome_right&dog_scratch
+
+dog_scratch=(baffle_in^baffle_out); Prevent conflicts that could burn out baffle ssr.
+in_baffle  =  baffle_in&dog_scratch
+out_baffle = baffle_out&dog_scratch
+
+dog_scratch=(slit_open^slit_close); Prevent conflicts that could burn out slit ssr.
+open_slit  =  slit_open&dog_scratch
+close_slit = slit_close&dog_scratch
+
+dog_scratch=(mirror_open^mirror_close); Prevent conflicts that could burn out mirror ssr.
+if (gate_mirror = 1)
+   open_mirror  = mirror_open&dog_scratch
+endif
+close_mirror = mirror_close&dog_scratch
+
+if (ra_track_on=1) and (M338=0)
+   if (M8001=0)
+     east_set=0;
+     west_set=0
+   endif
+
+   if (M8001=-1)
+     west_set=0
+     east_set=1; Turn on/maintain Set motor
+   endif
+
+   if (M8001=1)
+     east_set=0; 
+     west_set=1
+   endif
+endif
+
+if (ra_track_on=0) or (M338=1)
+   if (ra_set_mask=0)
+     east_set=0; 
+     west_set=0
+   endif
+
+   if (ra_set_mask=-1)
+     west_set=0
+     east_set=1; Turn on/maintain Set motor
+   endif
+
+   if (ra_set_mask=1)
+     east_set=0; 
+     west_set=1
+   endif
+endif
+
+if (abs(M274)*0.000735242 > dec_search_rate); average velocity is greater than search allowing for backlash velocity
+  dec_preload = 0; release the preload
+else
+  dec_preload = 1*ra_track_on; enagage the preload if RA tracking on
+endif
+
+if (M133 = 0) and (M138=0); The desired velocity is not zero and the motor is closed loop
+  ra_clamp=1; Separate QM and SM machinery to allow QM move
+end if
+
+if (M133 = 1) or (M138=1); Desired velocity is zero or the motor went open loop
+  ra_clamp=0; Clamp the machines together.
+endif
+
+deadman = man_alive | ra_clamp | east_set | west_set; 
+
+close

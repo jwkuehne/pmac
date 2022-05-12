@@ -1,0 +1,69 @@
+;----------------------------------------------------------------------------------
+; PLC:		dome
+; Application:	2.1M Telescope 
+; Author:	John Kuehne
+;
+; Description:   Compute dome azimuth from 5 reed switches and 24 magnets for a 3
+; degree stride - about 18" on the dome perimeter. The proximity interval to a 
+; magnet is about 6", and in the worst case the actual azimuth will be within 15"
+; of the reported value. This is adequate for keeping the dome slit centered with
+; the tube, and basic safety.
+;
+; If 1 or 2 switches fail the error can be detected and set a fatal code. If more
+; than 1 switch is on, this is fatal. Once a fatal error occurs, the PLC stops
+; counting and freezes the error code.
+
+; azimuth is relative starting at 0. Track82 needs to keep track of dome azimuth
+; by saving last_sw, and using first_sw to correct at startup.
+;
+;----------------------------------------------------------------------------------
+close
+del gat
+
+;----------------------------------------------------------------------------------
+#include "defines.txt"
+;----------------------------------------------------------------------------------
+
+OPEN PLC 5
+CLEAR
+
+if (err_sw = 0)
+   ; check for stuck switch - a fatal error.
+   bit_sw = sw1 + sw2*2 + sw3*4 + sw4*8 + sw5*16
+   if (bit_sw = 0) or (bit_sw = 1) or (bit_sw = 2) or (bit_sw = 4) or (bit_sw = 8) or (bit_sw = 16)
+      err_sw = 0; Only one switch  (or no switch) is on. Proceed.
+      ; Record current switch in convenient form.
+      curr_sw = sw1*1 + sw2*2 + sw3*3 + sw4*4 + sw5*5
+      if (curr_sw > 0) and (curr_sw != last_sw) ; a new switch is on.
+
+         if (last_sw = -1)
+            last_sw = curr_sw; Fresh start with unknown last_sw.
+            first_sw = curr_sw; Can be use to sync.
+         endif
+
+         delta_sw = last_sw - curr_sw
+         if (delta_sw = -4); wrap from sw1 to sw5.
+            delta_sw = 1
+         endif
+         if (delta_sw = 4); wrap from sw5 to sw1.
+            delta_sw = -1
+         endif
+
+         if (abs(delta_sw) > 1)
+            err_sw = 1
+         else
+            azimuth = azimuth + delta_sw;
+            if (azimuth > 119)
+               azimuth = 0
+            endif
+            if (azimuth < 0)
+               azimuth = 120 + azimuth
+            endif
+         endif
+
+         last_sw = curr_sw
+      endif
+   else
+      err_sw = 1 ; err_sw is a fatal error. 
+   endif
+endif

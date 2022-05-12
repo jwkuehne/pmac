@@ -1,0 +1,181 @@
+;----------------------------------------------------------------------------------
+;PLC:		safety
+;Application:	2.1M Telescope 
+;Author:	John Kuehne
+;
+;Description:  Set safety codes and accumulate status bits
+;----------------------------------------------------------------------------------
+close
+del gat
+
+;----------------------------------------------------------------------------------
+#include "defines.txt"
+;----------------------------------------------------------------------------------
+
+OPEN PLC 2
+CLEAR
+
+;----------------------------------------------------------------------------------
+
+if (m16&m23&m25 = 1); Checks for console override. Once set, Track82's Safety-On can clear it.
+   safety_override = 1
+endif
+
+; Countdown the shiftkey deadmen for expiration in case a Track82 quit unexpectedly with shiftkey down.
+; Exact timing not needed.
+if (alt_deadman1 > 0)
+   alt_deadman1 = alt_deadman1-1
+endif
+if (alt_deadman2 > 0)
+   alt_deadman2 = alt_deadman2-1
+endif
+if (alt_deadman3 > 0)
+   alt_deadman3 = alt_deadman3-1
+endif
+if (alt_deadman4 > 0)
+   alt_deadman4 = alt_deadman4-1
+endif
+
+if (alt_deadman1+alt_deadman2+alt_deadman3+alt_deadman4 > 0); one of the keyboards is down 
+    man_alive=1
+else
+    man_alive=deadman_alive; defer judgement to the physical switch
+    ; and clear any commands that could linger if Track82 quit unexpectedly
+    focus_track82_in=    0
+    focus_track82_out=   0
+    dome_track82_left=   0
+    dome_track82_right=  0
+    baffle_track82_in=   0
+    baffle_track82_out=  0
+    slit_track82_open=   0
+    slit_track82_close=  0
+    mirror_track82_open= 0
+    mirror_track82_close=0
+    north=0
+    south=0
+    east= 0
+    west= 0
+endif
+
+if (safety_override=0); Full safety.
+   if (stop_nmi = 1); Could be set by Track82 on an encoder mismatch, or here in condition red.
+      gate_track= 0
+      gate_set=   0
+      gate_search=0
+      gate_slew=  0
+      gate_dome=  0
+      gate_mirror=0
+   else
+      if (track_host_alive&1 = 1) ; green
+         gate_mirror = 0; Don't allow cover to open at ZD<50
+         if (i5112<60*one_second)
+            gate_track=0
+         else
+            gate_track= 1
+         endif
+         if (i5112<3*one_second)
+            gate_set=   0
+            gate_search=0
+            gate_slew=  0
+            gate_dome=  0
+         else
+            gate_set=   man_alive
+            gate_search=man_alive
+            gate_slew=  man_alive
+            gate_dome=  man_alive
+         endif
+      endif
+   
+      if (track_host_alive&2 = 2) ; yellow ZD>50.
+         gate_mirror = 1; Allow it to open at ZD>50
+         if (i5112<60*one_second)
+            gate_track= 0
+         else
+            gate_track= 1
+         endif
+         if (i5112<3*one_second)
+            gate_set=   0
+            gate_search=0
+            gate_slew=  0
+            gate_dome=  0
+         else
+            gate_set=   man_alive
+            gate_search=man_alive
+            gate_slew=  man_alive
+            gate_dome=  man_alive
+         endif
+      endif
+   
+      if (track_host_alive&4 = 4);  or (five_degree_limit=1); condition orange on Track82.
+         gate_mirror = 0; Could be at ZD<50, i.e. for SES collision zone.
+         gate_track= 0
+         if (i5112<3*one_second)
+            gate_set=   0
+            gate_search=0
+            gate_slew=  0
+            gate_dome=  0
+         else
+            gate_set=   0
+            gate_search=man_alive
+            gate_slew=  0
+            gate_dome=  man_alive
+         endif
+      endif
+
+      if (track_host_alive&8 = 8); condition red on Track82 (ZD>85). Stop all motion, and latch stop_nmi to true.
+         stop_nmi=   1; Prevents another Track82 from overriding.
+         gate_mirror=0
+         gate_track= 0
+         gate_set=   0
+         gate_search=0
+         gate_slew=  0
+         gate_dome=  0
+      endif
+   endif
+ endif
+
+if (safety_override=1); Deadman required, no safety for scope, dome, or open mirror cover.
+  gate_mirror=man_alive
+  gate_track= man_alive
+  gate_set=   man_alive
+  gate_search=man_alive
+  gate_slew=  man_alive
+  gate_dome=  man_alive
+endif
+
+if (safety_override=-1); Normal startup. Scope, dome, and open mirror cover locked out.
+ gate_mirror=0
+ gate_track= 0
+ gate_set=   0
+ gate_search=0
+ gate_slew=  0
+ gate_dome=  0
+endif
+
+
+;accumulate status bits until Track82 clears them. 7 hex digits as follows
+;1: track on for RA and DEC, deadman, deadman detect
+;2: speed guide,set,search,slew
+;3: direction NSEW
+;4: fatal following error RA and DEC, RA_SLEW
+;5: I2T for RA and DEC and RA_SLEW
+;6: open-loop RA and DEC and RA_SLEW
+;7: encoder quadrature error for RA (enc 4), DEC(enc 2), RA motor(enc 3) and RA_SLEW(enc 1)
+
+pmac_status=pmac_status|(1*ra_track_on + 2*dec_track_on + 4*deadman_alive + 8*M3 + 16*(guide|cguide) + 32*(set|cset) + 64*(search|csearch) + 128*(slew|cslew) + 256*(north|cnorth) + 512*(south|csouth) + 1024*(east|ceast) + 2048*(west|cwest))
+pmac_status=pmac_status|(4096*M342 + 8192*M242 + 16384*M142 + 65536*M347 + 131072*M247 + 262144*M147 + 1048576*M338 + 2097152*M238 + 4194304*M138 + 16777216*M418 + 33554432*M318 + 67108864*M218 + 134217728*M118)
+
+if (M180=0) ;
+   cmd "#1k"
+   pmac_status=pmac_status|8388608
+endif
+if (M280=0) ;
+   cmd "#2k"
+   pmac_status=pmac_status|8388608
+endif
+if (M380=0) ;
+   cmd "#3k"
+   pmac_status=pmac_status|8388608
+endif
+
+close

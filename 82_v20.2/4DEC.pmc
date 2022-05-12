@@ -1,0 +1,160 @@
+;----------------------------------------------------------------------------------
+;PLC: DEC Guide, Set, Search, Slew, STEPDEC, initial tracking motion control.
+;Application: 2.1M Telescope 
+;Author: John Kuehne
+;Date: January 30, 2020
+;
+; Description: DEC Guide, Set, Search and Slew on a single motor. Manual slew
+; runs on a special pure velocity/torque mode that allows it to run up to 1 deg/sec
+; (or any desired speed) when conditions permit. This is obtained with I263=I267=0,
+; I232=8015 (a hair higher than I231), and I211=0. GO uses pure velocity until the
+; actual position is within 3 degrees, and then spins to target with I267=7000 and
+; I263=500, which effectively runs search if the target is not reached before the 
+; move timer expires. Other speeds close the position loop with fatal following
+; error limit. Transition between velocity and position loops requires resetting
+; the actual position and commanded position. DEC Track runs in a motion control
+; program that also handles small STEPDEC commands.
+;----------------------------------------------------------------------------------
+CLOSE
+DELETE GATHER
+
+;----------------------------------------------------------------------------------
+#include "defines.txt"
+;----------------------------------------------------------------------------------
+
+OPEN PLC 4
+CLEAR
+
+;----------------------------------------------------------------------------------
+; Resume tracking after GO/stepdec and console move.
+;----------------------------------------------------------------------------------
+if (dec_mask=0) and (m233=1); Desired velocity 0 gives best transition back to track
+   m261=m262 i263=500 i267=7000 i211=13440; engage a stable position loop at this actual position.
+   dec_track_mask=0
+   dec_mask=-1; final state
+endif
+
+;----------------------------------------------------------------------------------
+; Finish a long GO
+;----------------------------------------------------------------------------------
+if (dec_mask=-8 or dec_mask=-4); We're in a long GO; CHANGE TO MAKE GO INCURSION INTO ORANGE
+   if (abs(M262/3072 - M272)<1181250+8400); if within 3 degrees and one turn of target
+      m261=m262; Forced commanded position to actual position
+      i263=500 i267=7000; Enable integral gain and position loop.
+      cmd "#2j=*"; Drive onto target
+      i5211=0
+      while (i5211 > -23); wait I292 milliseconds for move to start to prevent race condition with I233
+      endw
+      dec_mask=0; Done
+   endif
+endif
+
+;----------------------------------------------------------------------------------
+; Track
+;----------------------------------------------------------------------------------
+if (gate_track=1) and (dec_track_mask=0) and (dec_track_on=1) and (dec_mask=-1)
+   i263=500 i267=7000 i211=134400; position loop, one turn following error
+   dec_track_mask=1; mask command
+   dec_step = 0; Clear any stale stepdec
+   cmd "#2j/&2B3R"; Close servo loop and start program 3.
+endif
+
+;----------------------------------------------------------------------------------
+; DEC Track Off
+;----------------------------------------------------------------------------------
+if (dec_track_on=0 or gate_track=0) and (dec_track_mask=1)
+   cmd "&2A#2k"; Abort program and kill motor
+   dec_track_mask=0
+   dec_mask=-1; Nothing is going on for sure.
+endif
+
+;----------------------------------------------------------------------------------
+; GO
+;----------------------------------------------------------------------------------
+if (abs(dec_go) > 0); jog register is set
+   if (gate_slew=1 or gate_search=1);
+      if (dec_track_on=1)
+         if (dec_track_mask=1)
+            cmd "&2A#2k"; Abort program and kill motor
+            dec_track_mask=0; Allows restart when dec_mask=-1.
+         endif
+      endif
+      i263=0; Run in pure velocity loop with rate set by Track82
+      i267=0;
+      i211=0
+      ; Allow incursion into no-slew zone able to get out.
+      IF (gate_slew=1)
+         dec_mask=-8; mask for long GO
+      ELSE
+         dec_mask=-4
+         I222=dec_search_rate
+      ENDIF
+      m272=M262/3072 + dec_go; store the position for the end of the move
+      if (dec_go > 0); Jog in velocity mode until within 3 degrees.
+         cmd "#2j+"
+      endif
+      if (dec_go < 0)
+         cmd "#2j-"
+      endif
+      i5211=0
+      while (i5211 > -23); wait I292 milliseconds for move to start to prevent race condition with I233
+      endw
+   endif
+   dec_go=0; clear the request, e.g. if shiftkey wasn't down, or condition orange or red.
+endif
+
+;----------------------------------------------------------------------------------
+; Console/virtual
+;----------------------------------------------------------------------------------
+if (cnorth^north^csouth^south = 1) and (dec_mask < 1); allows interruption of zero or negative mask
+   if (guide+north+south>1 or cguide+cnorth+csouth>1)
+      total_rate = (((north - south + cnorth - csouth)*dec_guide_rate)*tube_position)
+      i263=500 i267=7000 i211=13440; position loop, 1/10 turn behind is end of the line
+      dec_mask=1*gate_track
+   endif
+   if (set+north+south>1 or cset+cnorth+csouth>1)
+      total_rate = (((north - south + cnorth - csouth)*dec_set_rate)*tube_position)
+      i263=500 i267=7000 i211=134400; position loop, 1 turn behind is end of the line
+      dec_mask=2*gate_set
+   endif
+   if (search+north+south>1 or csearch+cnorth+csouth>1)
+      total_rate = ((north - south + cnorth - csouth)*dec_search_rate)*tube_position
+      i263=500 i267=7000 i211=1344000; position loop, 10 turns behind is end of the line
+      dec_mask=4*gate_search
+   endif
+   if (slew+north+south>1 or cslew+cnorth+csouth>1)
+      total_rate = ((north - south + cnorth - csouth)*dec_slew_rate)*tube_position
+      i263=0 i267=0 i211=0; pure velocity loop.
+      dec_mask=8*gate_slew
+   endif
+   if (dec_mask>0)
+      if (dec_track_on=1)
+         if (dec_track_mask=1)
+            cmd "&2A#2k"; Abort program and kill motor
+            dec_track_mask=0
+         endif
+      endif
+      i5211=0
+      while (i5211 > -23); wait I292 milliseconds for move to start to prevent race condition with I233
+      endw
+      if (total_rate>0) or (total_rate=0); Could be zero for guide or set
+        I222=total_rate
+        cmd "#2j+"
+      else
+        I222=-total_rate
+        cmd "#2j-"
+      endif
+      while (i5211 > -23); wait I292 milliseconds for move to start to prevent race condition with I233
+      endw
+   endif
+endif
+
+;----------------------------------------------------------------------------------
+; End manually commanded motion or safety codes; Allow incursion into no-slew able to get out.
+;----------------------------------------------------------------------------------
+if (cnorth+north+csouth+south = 0 and dec_mask > 0) or (gate_slew=0 and abs(dec_mask)=8) or (gate_search=0 and abs(dec_mask)=4) or (gate_set=0 and dec_mask=2) or (gate_set=0 and dec_mask=1)
+   cmd "#2j/"
+   dec_mask=0
+endif
+
+close

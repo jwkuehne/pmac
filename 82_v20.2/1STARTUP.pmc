@@ -1,0 +1,151 @@
+;----------------------------------------------------------------------------------
+;PLC:					82 Startup
+;Application:	2.1M Telescope 
+;Author:	John Kuehne
+;
+;Description:  This PLC initializes the Geo Brick
+;----------------------------------------------------------------------------------
+CLOSE
+DELETE GATHER
+
+;----------------------------------------------------------------------------------
+#include "defines.txt"
+;----------------------------------------------------------------------------------
+
+OPEN PLC 1 
+CLEAR
+
+;----------------------------------------------------------------------------------
+disable plc 2..31
+
+;----------------------------------------------------------------------------------
+;clear all switch masks
+;consult defines.txt for definitions of these masks and switches
+;----------------------------------------------------------------------------------
+one_second     =   -8388608/3713991*1000
+; These are exact, computed from the encoders, gear ratios and motor speeds.
+ra_track_rate  =  15.041; initialize RA track rate to 15.041 arcsec/sec
+ra_guide_rate  =  1; initialize RA Guide rate to 1 arcsec/sec
+ra_set_rate    =  10; initialize RA Set rate to 10 for stability, although it's 14.0625 arcsec/sec (Set mechanism calculation)
+ra_autoguide   =  0; clear autoguide register
+ra_accel       =  1; initalize RA track and guide accel time in seconds
+ra_set_accel   =  0.3; initalize RA Set accel time for smooth transition in seconds
+ra_track_mask  =  0
+ra_guide_mask  =  0
+ra_set_mask    =  0
+ra_track_on    =  0
+ra_autoguide   =  0
+ra_old_track_rate=15
+ra_mask        = -1
+ra_go          =  0
+ra_search_rate =  16.41
+ra_slew_rate   =  384; 1 deg/sec
+ra_clamp_time  =  0.5; Time for QM to release from SM machine when motor is not moving
+SUBVERT        =  0;
+SUSPEND        =  0;
+HA_POS         =  0;
+TIMER_POS      =  0;
+OFFSET         =  0;
+ra_base        =  0;
+ha_total       =  0;
+race_base      =  0;
+
+;Unnamed registers whose meaning has changed a lot during development.
+P1000 = 0; RT counter for averaging SuperTrack encoder position in 0RTC
+P1001 = 0; SET timer to delay re-engage to position mode 1s after command ends.
+p1002 = 0; SuperTrack correction
+p1003 = 0; SuperTrack counts per arcsecond, set in MRA.
+p1004 = 0; Correction to ha_total during SET velocity mode, calculated when position mode re-enabled.
+p1005 = 0; Accumulated SuperTrack encoder position in 0RTC
+p1006 = 0; Unused.
+
+; These are exact gear ratios on the IM gears: 45T/Sextual worm, 25T/Quadruple worm, feeding the 1-degree worm.
+dec_track_rate   = 0; initailize DEC track rate
+dec_guide_rate   = 0.109375; initialize DEC Guide rate 1 arcsec/sec
+dec_set_rate     = 1.64; initialize DEC Set rate to 15 arcsec/sec
+dec_search_rate  = 16.41; 150 arcsec/sec
+dec_slew_rate    = 325; 1 deg/sec is actually 393.75, but a bit slower rattles less
+dec_track_mask   = 0
+dec_mask         = -1
+dec_track_on     = 0
+dec_current_track_rate=0
+tube_position    = 1; east tube is standard
+safety_override  = -1; Demands a Track82 to be present to move scope or dome. 0 is safe opereration, 1 is unsafe operation.
+pmac_status      = 0
+guide  = 1
+set    = 0
+search = 0
+slew   = 0
+north  = 0
+south  = 0
+east   = 0
+west   = 0
+gate_mirror = 1
+gate_track  = 1
+gate_search = 1
+gate_slew   = 1
+gate_dome   = 1
+stop_nmi    = 0
+focus_track82_in  = 0
+focus_track82_out = 0
+dome_track82_left = 0
+dome_track82_right= 0
+deadman = 0
+seg_inc = 0
+alt_deadman1 = 0; clear all keyboard deadman pulse registers
+alt_deadman2 = 0
+alt_deadman3 = 0
+alt_deadman4 = 0
+
+; dome variables
+err_sw   = 0
+bit_sw   = 0
+curr_sw  = 0
+last_sw  = -1
+delta_sw = 0
+azimuth  = 0
+first_sw = -1
+
+P501 = 1; DELTA_T non-zero.
+P504 = -1; Start out in track mode.
+diagnostic_latch = -1; latch diagnostic variables
+
+mcdversion = 18; keep track of version
+
+I8 = 3; Reduced RTI rate gets ~100 samples each RMA cycle at 5Hz, reduces peak RTI load.
+; #5 is used for encoder only: there's no motor, but commanded position is used for clock.
+i501 = 1; Activate #5
+i511 = 0; no following error
+i522 = 1; 1 count per millisecond
+i508 = 1; Multiplier is normally 96, not needed.
+i509 = 1;
+i533 = 0; No need to compute integral gain.
+i567 = 0; No need for position loop.
+cmd "#5j+"; Start jogging the commanded position for clock M561 commanded position.
+
+
+;in case we want to test encoder counts, latch properly for quad encoding
+;I7024=1; gate encoder 2
+;I7025=1; for low-low
+i377=2500; When using Set motor, prevent track motor from oscillating by limiting its performance (high magnetizing current saturates to prevent high speed)
+;i369=15731; high here, lower for emulation mode using track motor.
+i369=11851; Prevents Guide from tripping I^2T
+i332=8600; 8100 was too slow, and you could hear the speed-up when engaging position loop.
+i285=0; Dec backlash compensation is harmful with shims taking out most of the slop from the damaged sold-hollow coupling.
+
+; Setup for velocity loop on motor instead of worm encoder for better stability, lower noise, less overshoot.
+i308  = 512; was 96. 512:5 is the exact ratio.
+i309  = 5;   was 96
+i330  = 2500000; was 6,000,000, which is 1,125,000 with I308 changed from 96 to 512. 2,500,000 works better under SET velocity load.
+i304  = $003503; was $003504. Point velocity loop to the motor encoder
+i7030 = 2; was 3. Decode x2 also matches i372.
+i371  = 2048; was 4096
+
+
+;----------------------------------------------------------------------------------
+I5=3; Allow PLC0
+enable plc 0,2,3,4,5,6,7,8
+
+disable plc 1   	;run startup once and close
+close
+

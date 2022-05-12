@@ -1,0 +1,330 @@
+;----------------------------------------------------------------------------------
+;Motion control program: HA SuperTrack a satellite, NEO, or star using Lagrange interpolated path in protected double buffers.
+;
+;Application:   2.1M Telescope
+;Author:        John W. Kuehne, Ph.D.
+;August 5, 2020
+;
+;----------------------------------------------------------------------------------
+
+#include "defines.txt"
+; Add to defines:
+#define LONG_SECONDS P500; Sent by Track82 to synchronize clocks.
+#define DELTA_TIME   P501; Interpolation time interval.
+#define START_TIME_X P502; Track82 seconds start time for buffer X
+#define START_TIME_Y P503; and for buffer Y.
+#define BUFFER       P504; -1 is use ra_track_rate, 0 is buffer X, 1 is buffer Y.
+#define HA_INTERP    P505; General purpose calculated position.
+#define HA_INTERP1   P506; The previous calculated position.
+#define HA_INTERP2   P507; The current calculated position. The difference drives X.
+#define TLAG1        P508; Time 0<TLAG1<3 in Lagrange interpolation polynomial. Desire positions from central segment in [1,2]
+#define TLAG2        P509; Squared.
+#define TLAG3        P510; Cubed.
+#define HX3          P511; X buffers of cubic, quadratic, linear, and constant Lagrange coefficients.
+#define HX2          P512; H is HA
+#define HX1          P513
+#define HX0          P514
+#define HY3          P515; Y buffer.
+#define HY2          P516
+#define HY1          P517
+#define HY0          P518
+; P519-P526 are declination coefficients used in DECE ephemeris motion control program.
+#define TRACK        P527; Desired position when ra_track_rate is being used. Updated in PLC0.
+#define BUFFER_INUSE P528; Protect against buffer changing in the middle of a lookahead calculation that was rescanned.
+#define DBUFFER_INUSE P529; Same for DECE
+#define SYNC_T       P530; Estimate of transmission time from TRACK82
+#define TIME_T       P531; Synchronized time advanced by SUPER_T every cycle. Unless TM extended by PMAC, stays with sysTime.
+#define TEST_T       P532; Record sysTime-TIME_T to make sure they stay synchronized.
+#define CLOCK_T      P533; Servo clock in PLC0.
+
+#define SUPER_T      0.2;  SuperTrack interval. 0.2 is 5Hz.
+#define SUPER_MIN    P534; Minimum signed speed in arcsec/sec*SUPER_T, positive is normal westward tracking.
+#define SUPER_MAX    P535; Maximum signed speed in arcsec/sec*SUPER_T, positive is normal westward tracking.
+#define SUPER_FACTOR ra_track_rate/15; SuperTrack was tuned at 15 arcsec/sec. Derate especially for slower speeds.
+#define SUPER_PRO    P536; Proportional gain.
+#define SUPER_LIM    P537; Maximum correction.
+#define CLOCK_START  P538; Set to CLOCK_T at start of new position average in PLC0
+#define SUPER_INTEGRAL P539; Integral of correction.
+#define SUPER_INTEGRAL_GAIN P540; and its gain factor.
+
+; M561 is jogging at 1 cnt/ms i.e. I522=1 and I508=1. M561 is in units of I508*32, so divide by 32000 to get seconds.
+#define sysTime     ((M561/32000) + LONG_SECONDS + SYNC_T); TRACK82 sets M561=0 and sends LONG_SECONDS and SYNC_T.
+; Adjusted sysTime for central time of HA_POS for SuperTrack position.
+#define sysTime_ADJ (((CLOCK_T + CLOCK_START)/2/32000) + LONG_SECONDS + SYNC_T);
+
+#define SEG_WORM     P110; Incremental distance for X in this SUPER_T interval.
+#define SEG_INC      P111; SEG_WORM - SEG_SYNC to limit acceleration.
+#define SEG_SYNC     P112; Previous distance.
+
+close
+del gat
+
+&1
+#3->x
+open prog 2 clear
+
+linear inc 
+
+TM(SUPER_T * 1000); Milliseconds for LINEAR.
+TA(SUPER_T * 250);  Acceleration time.
+I316 = 1.8; Maximum velocity 45 arcsec/sec is 30 arcsec/sec + 15 arcsec/sec SET.
+I317 = I316/SUPER_T; Set to maximum cnts/sec / SUPER_T / 1000 to prevent PMAC from extending TM in linear blended moves.
+SUBVERT = 50; SuperTrack will engage 5s after velocity mode ends.
+
+; Soft Start in velocity mode to avoid faulting if the gears were out of lash, e.g. raw SET east.
+P1001   = 25; 5 seconds cold start in velocity mode.
+I367    = 0;  Close only velocity loop - motor will run about the commanded tracking speed without minding the SET motor.
+I363    = 0;  Disable integral gain
+I311    = 0;  Disable fatal following error.
+
+SEG_SYNC  = 0;
+SUPER_MIN =  1*SUPER_T;  1 arcsec/sec min (no eastward tracking)
+SUPER_MAX = 18*SUPER_T; 18 arcsec/sec max
+SUPER_PRO = 0.4;
+SUPER_LIM = 0.03;
+SUPER_INTEGRAL = 0;
+SUPER_INTEGRAL_GAIN = 0.15;
+SUSPEND = 0;
+
+race_base = 1; Prevent ha_reg from updating on possible race condition with evaluation of ha_total, where race_base is cleared.
+ra_base   = ra_base + M362; Save base position for RA_SLEW code that keeps track of combined QM and RA machinery.
+homez 3
+race_base = 2; Signals RA_SLEW to set race_base to 0.
+
+; Measured 30 trials, jogging 1 full turn on the main worm and reading the counts on the 0.1 micron tape encoder.
+; Also (24*12*25.4+24.71+0.2*2*pi)/(360*3600)*10000: each hour is 1 foot plus 1.0296mm, 0.2mm tape thickness.
+P1003  = 56.6448
+
+; Track82 synchronizes in run_ephemeris in field ephemeris_data.
+TIME_T  = sysTime; Set base time.
+BUFFER_INUSE = BUFFER;
+
+; First get the current calculated position.
+if (BUFFER_INUSE = 0); buffers alternate between X and Y to prevent race condition when sent from TRACK82
+   TLAG1 = 1 + ((TIME_T - START_TIME_X)/DELTA_TIME)
+   TLAG2 = TLAG1*TLAG1; squared
+   TLAG3 = TLAG2*TLAG1; cubed
+   HA_INTERP1 = 54000*(HX3*TLAG3 + HX2*TLAG2 + HX1*TLAG1 + HX0); Actual HA in arcseconds for buffer X.
+endif
+if (BUFFER_INUSE = 1)
+   TLAG1 = 1 + ((TIME_T - START_TIME_Y)/DELTA_TIME)
+   TLAG2 = TLAG1*TLAG1; squared
+   TLAG3 = TLAG2*TLAG1; cubed
+   HA_INTERP1 = 54000*(HY3*TLAG3 + HY2*TLAG2 + HY1*TLAG1 + HY0); Actual HA in arcseconds for buffer Y.
+endif
+if (BUFFER_INUSE = -1)
+   TRACK = 0;
+   M561 = 0
+endif
+
+M8001=0; Make sure SET motor off to start.
+while (1=1)
+   BUFFER_INUSE = BUFFER; Freeze value for this iteration.
+   if (BUFFER_INUSE > -1)
+      if (TLAG1 < 0.5 or TLAG1 > 2.5); Lost contact with TRACK82's active ephemeris calculation.
+         M8001  = 0;  Make sure SET is off.
+         ra_track_on = 0; Tell RA PLC to stop tracking,
+         cmd "&1A#3k"; and kill this program immediately.
+      endif
+   endif
+   if (ra_guide_mask > 0) ; manual guiding or SET requested in 3RA
+      if (ra_guide_mask = 1) ; Guide at 1 arcsec/sec
+         if (BUFFER_INUSE = -1);
+            TRACK = TRACK + ra_track_rate*(CLOCK_T - CLOCK_START)/32000; Must update in Track mode
+         endif
+         M362 = M362 - (west-east+cwest-ceast)*SUPER_T*40*16384; 16384 is 32*i308=32*512
+         OFFSET = OFFSET - (west-east+cwest-ceast)*SUPER_T
+         P1000 = 0; Reset average encoder position
+         P1005 = 0;
+         CLOCK_START  = CLOCK_T; Capture the servo clock
+      endif
+      if (ra_guide_mask = 2); SET while tracking
+         SUBVERT = 20; SuperTrack will engage 4s after SET ends and 2s after position loop is engaged.
+         P1001   = 10;  Keep in velocity mode for 2s after command ends in case observer is pulsing the command.
+         I367    = 0;  Close only velocity loop - motor will run about the commanded tracking speed without minding the SET motor.
+         I363    = 0;  Disable integral gain
+         I311    = 0;  Disable fatal following error.
+         if (west=1 and east=0 or west=0 and east=1)
+            M8001 = west - east;
+         else
+            M8001 = cwest - ceast;
+         endif
+      endif
+   else ; SuperTrack or autoguide.
+      if (I367 = 0 and ra_mask = -1); Still in SET velocity loop - the command ended, re-engage position loop in 1s.
+         M8001 = 0; SET motor off. See 7OUTPUT.
+         ra_autoguide = 0;  Keep preventing autoguider steps from happening during last second of velocity mode.
+         P1001 = P1001 - 1; Count down the SET timer.
+         if (P1001 < 0);     restore position loop 1s after SET command ends.
+            P1004 = P1004 - (M361 - M362)/16384/40; Adjust for accumulated slip in velocity mode, added to ha_total in 8SLEW.
+            M362  = M361 ;  Set actual position to commanded position zeros the following error accumulated during velocity move.
+            I367  = 1280 ;  Engage position loop, limit position error into servo to 2 arcsec (40 counts/arsec and 1/16 counts)
+            I311  = 40320;  Enable fatal following error - about 4 seconds at sideral rate.
+            i363  = 96;     Restore integral gain.
+         endif
+      endif
+
+      if (ra_autoguide = 0); SuperTrack preparing or active.
+        SUBVERT = SUBVERT - 1; Countdown to triggers, keep time active.
+
+        if (M518 = 1) ; SuperTrack encoder is latched OFF, e.g off-tape.
+           M518 = 0; Attempt to reset encoder, e.g. just coming onto tape at HA=-4H
+           SUBVERT = 25; Attempt re-engage in 5 seconds.
+        endif
+
+        if (SUBVERT = 0);    Trigger setup.
+           TIME_T = sysTime; Reset base time.
+           ; Compute OFFSET for TIME_T to synchronize with tape encoder.
+           if (BUFFER_INUSE = 0); buffers alternate between X and Y to prevent race condition when sent from TRACK82
+              TLAG1 = 1 + ((TIME_T - START_TIME_X)/DELTA_TIME)
+              TLAG2 = TLAG1*TLAG1; squared
+              TLAG3 = TLAG2*TLAG1; cubed
+              HA_INTERP  = 54000*(HX3*TLAG3 + HX2*TLAG2 + HX1*TLAG1 + HX0); Actual HA for buffer X.
+              HA_INTERP1 = HA_INTERP
+           endif
+           if (BUFFER_INUSE = 1)
+              TLAG1 = 1 + ((TIME_T - START_TIME_Y)/DELTA_TIME)
+              TLAG2 = TLAG1*TLAG1; squared
+              TLAG3 = TLAG2*TLAG1; cubed
+              HA_INTERP  = 54000*(HY3*TLAG3 + HY2*TLAG2 + HY1*TLAG1 + HY0); Actual HA for buffer Y.
+              HA_INTERP1 = HA_INTERP
+           endif
+           if (BUFFER_INUSE = -1)
+              TRACK     = 0
+              HA_INTERP = 0
+           endif
+           HA_POS  = M562/(P1003*32); Instantaneous SuperTrack encoder position in arcseconds.
+           OFFSET  = HA_INTERP - HA_POS; OFFSET is the value added to HA_POS to get absolute HA on the tape encoder.
+           SUPER_INTEGRAL = 0;
+           P1000 = 0; Reset average encoder count.
+           P1005 = 0; Reset average encoder position.
+           CLOCK_START  = CLOCK_T; Capture the servo clock
+        endif
+        
+        if (SUBVERT < 0)
+           if (BUFFER_INUSE = 0); buffers alternate between X and Y to prevent race condition when sent from TRACK82
+              TLAG1 = 1 + ((sysTime_ADJ - START_TIME_X)/DELTA_TIME)
+              TLAG2 = TLAG1*TLAG1; squared
+              TLAG3 = TLAG2*TLAG1; cubed
+              HA_INTERP = 54000*(HX3*TLAG3 + HX2*TLAG2 + HX1*TLAG1 + HX0); Actual HA for buffer X.
+           endif
+           if (BUFFER_INUSE = 1)
+              TLAG1 = 1 + ((sysTime_ADJ - START_TIME_Y)/DELTA_TIME)
+              TLAG2 = TLAG1*TLAG1; squared
+              TLAG3 = TLAG2*TLAG1; cubed
+              HA_INTERP = 54000*(HY3*TLAG3 + HY2*TLAG2 + HY1*TLAG1 + HY0); Actual HA for buffer Y.
+           endif
+           if (BUFFER_INUSE = -1);
+              TRACK = TRACK + ra_track_rate*(CLOCK_T - CLOCK_START)/32000; Position of constant-rate tracking with SuperTrack.
+              HA_INTERP = TRACK - (CLOCK_T - CLOCK_START)/2/32000*ra_track_rate; Adjusted for central time of HA_POS.
+           endif
+           HA_POS = P1005/(P1003*I0508*32)/P1000; Capture an averaged position.
+           P1000 = 0; Reset average encoder position
+           P1005 = 0;
+           CLOCK_START  = CLOCK_T; Capture the servo clock
+
+           P1002 = (HA_INTERP - HA_POS - OFFSET)*SUPER_PRO; Correction.
+
+           SUPER_INTEGRAL = SUPER_INTEGRAL + P1002; Integral of corrections, not error.
+
+           if (abs(SUPER_INTEGRAL)*SUPER_INTEGRAL_GAIN > SUPER_LIM)
+              SUPER_INTEGRAL = SUPER_LIM*SUPER_INTEGRAL/abs(SUPER_INTEGRAL)
+           endif
+
+           P1002 = P1002 + SUPER_INTEGRAL*SUPER_INTEGRAL_GAIN
+
+           if (abs(P1002) > SUPER_LIM);
+              if (abs(P1002) > 3*SUPER_PRO); Out of range, encoder failure, slippage, or large external forcing, e.g. wind.
+                 P1002 = 0; Cancel correction
+                 SUPER_INTEGRAL = 0
+                 SUSPEND = SUSPEND + 1
+                 if (SUSPEND > 15) ; 3 seconds of something wrong
+                    SUBVERT = 25  ; turn off subversion and try again in 5 seconds.
+                    pmac_status=pmac_status|8388608
+                 endif
+              else
+                 P1002 = SUPER_LIM*P1002/abs(P1002); SUPER_LIM with correct sign.
+                 SUSPEND = 0
+              endif
+           else
+              SUSPEND = 0
+           endif
+           P0   = P1002; For monitoring in PEWIN.
+           M362 = M362 - P1002*40*16384*SUPER_FACTOR; Immediate SuperTrack hint, adjusted for tracking speed.
+        endif
+      else ; An autoguide correction needs to be done instead of a SuperTrack correction.
+         if (BUFFER_INUSE = -1);
+            TRACK = TRACK + ra_track_rate*(CLOCK_T - CLOCK_START)/32000; Must update in Track mode
+         endif
+         P1000 = 0; Reset average encoder position
+         P1005 = 0;
+         CLOCK_START  = CLOCK_T; Capture the servo clock
+         ra_autoguide_abs = abs(ra_autoguide)
+         if (ra_autoguide_abs > (5*SUPER_T) and abs(ra_track_rate) > 2.5); When more than 1", run at 2"/sec guide, at the expense of overshoot.
+           ra_autoguide_dole = ra_autoguide_abs/ra_autoguide*2*SUPER_T; dole out steps.
+           M362 = M362 - ra_autoguide_dole*40*16384
+           OFFSET = OFFSET - ra_autoguide_dole
+           ra_autoguide = ra_autoguide-ra_autoguide_dole
+         else
+           if (ra_autoguide_abs > SUPER_T/2); Dole out quartersize increments to control overshoot.
+              ra_autoguide_dole = ra_autoguide_abs/ra_autoguide*SUPER_T/2
+              M362 = M362 - ra_autoguide_dole*40*16384
+              OFFSET = OFFSET - ra_autoguide_dole
+              ra_autoguide = ra_autoguide-ra_autoguide_dole
+           else
+              M362 = M362 - ra_autoguide*40*16384
+              OFFSET = OFFSET - ra_autoguide
+              ra_autoguide=0; clear guide register
+           endif
+         endif
+      endif
+   endif
+
+   ; Get advanced position in SUPER_T seconds.
+   TIME_T = TIME_T + SUPER_T; This depends on TM staying at SUPER_T and no PMAC extentions for motor limits.
+
+   if (BUFFER_INUSE = 0); buffers alternate between X and Y to prevent race condition when sent from TRACK82
+      TLAG1 = 1 + ((TIME_T - START_TIME_X) / DELTA_TIME)
+      TLAG2 = TLAG1*TLAG1; squared
+      TLAG3 = TLAG2*TLAG1; cubed
+      HA_INTERP2 = 54000*(HX3*TLAG3 + HX2*TLAG2 + HX1*TLAG1 + HX0); Actual HA for buffer X.
+   endif
+   if (BUFFER_INUSE = 1)
+      TLAG1 = 1 + ((TIME_T - START_TIME_Y) / DELTA_TIME)
+      TLAG2 = TLAG1*TLAG1; squared
+      TLAG3 = TLAG2*TLAG1; cubed
+      HA_INTERP2 = 54000*(HY3*TLAG3 + HY2*TLAG2 + HY1*TLAG1 + HY0); Actual HA for buffer Y.
+   endif
+
+   ; Get incremental distance for this TM, limiting acceleration to prevent PMAC extending TM, avoid hard stops, protect DC bus.
+   if (BUFFER_INUSE = -1); No ephemeris. Use ra_track_rate.
+      SEG_WORM = ra_track_rate*SUPER_T; Desired distance to go in TM.
+      SEG_INC  = SEG_WORM - SEG_SYNC;   Acceleration computed from previous SEG_WORM.
+      if (abs(SEG_INC) > 3*SUPER_T);   Limit acceleration this SUPER_T cycle.
+         SEG_WORM = SEG_SYNC + 3*SUPER_T*SEG_INC/abs(SEG_INC); Allow increase/decrease of acceleration.
+      endif
+      SEG_SYNC = SEG_WORM; Save for next acceleration 
+   else
+      SEG_WORM = HA_INTERP2 - HA_INTERP1; Desired distance to go in TM.
+      SEG_INC  = SEG_WORM - SEG_SYNC;     Acceleration computed from previous SEG_WORM.
+      if (abs(SEG_INC) > 3*SUPER_T);     Limit acceleration this SUPER_T cycle. May trigger subversion restart.
+         SEG_WORM = SEG_SYNC + 3*SUPER_T*SEG_INC/abs(SEG_INC); Allow increase/decrease of acceleration.
+      endif
+      SEG_SYNC = SEG_WORM; Save for next accleration 
+      ra_track_rate = (HA_INTERP2 - HA_INTERP1)/SUPER_T; TRACK82s will display this desired rate on their heartbeat.
+      HA_INTERP1 = HA_INTERP2 
+   endif
+
+   if (SEG_WORM < SUPER_MIN or SEG_WORM > SUPER_MAX); Block eastward tracking to protect gears, maximum 24 arcsec/sec westward.
+      M8001 = 0; Make sure SET is off.
+      ra_track_on = 0; Tell RA PLC to stop tracking,
+      cmd "&1A#3k"; and kill this program immediately,
+   endif
+
+   X(40*SEG_WORM); 600 cnt/sec is 15 arcsec/sec for 72000 cnt encoder, 120 cnts (3 arcsec) @5HZ.
+
+   TEST_T = sysTime - TIME_T; Monitor for testing.
+
+endwhile
+
+close

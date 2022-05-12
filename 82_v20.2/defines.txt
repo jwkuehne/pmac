@@ -1,0 +1,302 @@
+;----------------------------------------------------------------------------------
+;PLC:					all
+;Application:	2.1M Telescope 
+;Author:			John Kuehne
+;
+;Description:  include file for all PLCs. Use recommended M-variables for GeoBrick
+;----------------------------------------------------------------------------------
+
+M16->Y:$78803,0,1; Input 16 Data Line, J7 Pin 1,  north
+M17->Y:$78803,1,1; Input 17 Data Line, J7 Pin 20, south
+M18->Y:$78803,2,1; Input 18 Data Line, J7 Pin 2,  east
+M19->Y:$78803,3,1; Input 19 Data Line, J7 Pin 21, west
+M20->Y:$78803,4,1; Input 20 Data Line, J7 Pin 3,  slew
+M21->Y:$78803,5,1; Input 21 Data Line, J7 Pin 22, search
+M22->Y:$78803,6,1; Input 22 Data Line, J7 Pin 4,  set
+M23->Y:$78803,7,1; Input 23 Data Line, J7 Pin 23, guide
+
+M24->Y:$78804,0,1; Input 24 Data Line, J7 Pin 5,  Slit Open
+M26->Y:$78804,2,1; Input 26 Data Line, J7 Pin 6,  Slit Close
+M28->Y:$78804,4,1; Input 28 Data Line, J7 Pin 7,  Mirror Cover Open
+M30->Y:$78804,6,1; Input 30 Data Line, J7 Pin 8,  Mirror Cover Close
+M25->Y:$78804,1,1; Input 25 Data Line, J7 Pin 24, Baffle In
+M27->Y:$78804,3,1; Input 27 Data Line, J7 Pin 25, Baffle Out
+
+
+M42->Y:$078805,2,1; Output 11 Data Line, J7 Pin 32, Slit Open (was west_search)
+M43->Y:$078805,3,1; Output 12 Data Line, J7 Pin 33, Slit Close (was east_search)
+M44->Y:$078805,4,1; Output 13 Data Line, J7 Pin 34, Mirror Cover Open(was east_slew)
+M45->Y:$078805,5,1; Output 14 Data Line, J7 Pin 35, west_slew - now just used to command clamps and clutch for search and slew
+M46->Y:$078805,6,1; Output 15 Data Line, J7 Pin 36, Mirror Cover Close
+
+
+M32->Y:$078802,0,1; Output 1 Data Line, J6 Pin 30, dome left (was north_search)
+M33->Y:$078802,1,1; Output 2 Data Line, J6 Pin 31, dome right (was south_search)
+M34->Y:$078802,2,1; Output 3 Data Line, J6 Pin 32, Baffle In (was north_slew)
+M35->Y:$078802,3,1; Output 4 Data Line, J6 Pin 33, Baffle Out (was south_slew)
+
+M36->y:$078802,4,1; Output 5 Date Line, J6 Pin 34,  focus-in
+M37->Y:$078802,5,1; Output 6 Data Line, J6 Pin 35,  focus-out
+M38->Y:$078802,6,1; Output 1 Data Line, J6 Pin 36,  deadman switch 
+M41->Y:$078805,0,1; Output 9 Data Line, J7 Pin 30,  east_set
+M40->Y:$078805,1,1; Output 10 Data Line, J7 Pin 31, west_set
+M47->Y:$078805,7,1; Output 16 Data Line, J7 Pin 37, dec_preload
+
+M8->Y:$78801,0,1;   Input 9 Data Line, J6 Pin 5,  five_degree_limit
+M0->Y:$78800,0,1;   Input 1 Data Line, J6 Pin 1,  focus-in
+M1->Y:$78800,1,1;   Input 2 Data Line, J6 Pin 20, focus-out
+M2->Y:$78800,2,1;   Input 3 Data Line, J6 Pin 2,  was deadman in old system, unused
+M3->Y:$78800,3,1;   Input 4 Data Line, J6 Pin 21, deadman detect
+M4->Y:$78800,4,1;   Input 5 Data Line, J6 Pin 3,  foot-pedal switch for deadman
+M5->Y:$78800,5,1;   Input 6 Data Line, J6 Pin 22; dome left from PTI
+M6->Y:$78800,6,1;   Input 7 Data Line, J6 Pin 4;  dome right from PTI
+
+M501->X:$078101,0,24,S; ENC5 24-bit counter position for Renishaw
+M518->X:$78100,8;       Encoder error is 1 when off-scale
+M562->D:$00028B;        Actual position in IXX08*32 units
+M561->D:$000288;        Commanded position is used as a clock with jogging, although no motor.
+
+M10->Y:$78801,1,1; Dome encoder switch 5, Input 10 J6 Pin#24
+M11->Y:$78801,2,1; Dome encoder switch 4, Input 11 J6 Pin#6
+M12->Y:$78801,3,1; Dome encoder switch 3, Input 12 J6 Pin#25
+M13->Y:$78801,4,1; Dome encoder switch 2, Input 13 J6 Pin#7
+M14->Y:$78801,5,1; Dome encoder switch 1, Input 14 J6 Pin#26
+
+M401->X:$078019,0,24,S; ENC4 24-bit counter position
+M403->X:$07801B,0,24,S; captured encoder
+M417->X:$078018,11;     capture flag
+M418->X:$078018,8;      encoder error
+M480->Y:$078807,3,1;    Encoder loss
+M342->Y:$0001C0,2,1;    fatal following error
+M347->Y:$0001C0,5,1;    I2T
+M343->Y:$0001C0,3,1;    amp fault
+M338->X:$0001B0,18,1;   open-loop
+M318->X:$078010,8;      encoder error
+M372->L:$0001D7;        Variable jog position
+M375->X:$0001B9,8,16,S; actual quadrature current
+M361->D:$000188;        #3 Commanded position (1/[Ixx08*32] cts)
+M362->D:$00018B;        #3 actual position
+M380->Y:$078807,2,1;    Encoder loss
+
+M201->X:$078009,0,24,S; ENC4 24-bit counter position
+M203->X:$07800B,0,24,S; captured encoder
+M217->X:$078008,11;     capture flag
+M218->X:$078008,8;       encoder error
+M233->X:$000130,13,1;   desired velocity zero
+M261->D:$000108;        commanded position
+M262->D:$00010B;        actual position
+M272->L:$00157;         variable jog postion for GO
+M242->Y:$000140,2,1;    fatal following error
+M247->Y:$000140,5,1;    I2T
+M243->Y:$000140,3,1;    amp fault
+M238->X:$000130,18,1;   open-loop
+M275->X:$000139,8,16,S; actual quadrature current
+M274->D:$00016F;        Averaged actual velocity (1/[Ixx09*32] cts/cyc)
+M280->Y:$078807,1,1;    Encoder loss
+
+M101->X:$078001,0,24,S; ENC4 24-bit counter position
+M103->X:$078003,0,24,S; captured encoder
+M117->X:$078000,11;     capture flag
+M118->X:$078000,8;      encoder error
+M133->X:$0000B0,13,1;   desired velocity zero
+M161->D:$000088;        commanded position
+M162->D:$00008B;        actual position
+M172->L:$0000D7;        variable jog postion for GO
+M142->Y:$0000C0,2,1;    fatal following error
+M147->Y:$0000C0,5,1;    I2T
+M143->Y:$0000C0,3,1;    amp fault
+M138->X:$0000B0,18,1;   open-loop
+M175->X:$0000B9,8,16,S; actual quadrature current
+M174->D:$0000EF;        Averaged actual velocity (1/[Ixx09*32] cts/cyc)
+M180->Y:$078807,0,1;    Encoder loss
+
+M5197->X:$002000,0,24,S; coordinate system 1 time base in I10 units
+M5297->X:$002100,0,24,S; coordinate system 2 time base in I10 units
+
+M8000->Y:$78006,4,8; Bus voltage. Multiply by 5.875/sqrt(2) for volts
+;----------------------------------------------------------------------------------
+; INPUTS
+
+#define cnorth m16; console north
+#define csouth m17; console south
+#define ceast  m18; console east
+#define cwest  m19; console west
+
+#define cguide m23;  console guide
+#define cset m22;    console set
+#define csearch m21; console search
+#define cslew m20;   console slew
+
+
+#define focus_in  (m0^focus_track82_in)
+#define focus_out (m1^focus_track82_out)
+
+#define dome_left  (m5^dome_track82_left)
+#define dome_right (m6^dome_track82_right)
+
+#define baffle_in  (m25^baffle_track82_in)
+#define baffle_out (m27^baffle_track82_out)
+
+#define slit_open  (m24^slit_track82_open)
+#define slit_close (m26^slit_track82_close)
+
+#define mirror_open  (m28^mirror_track82_open)
+#define mirror_close (m30^mirror_track82_close)
+
+
+;CW (right) dome_right sequentially triggers 5 switches every 15 degrees
+#define sw5 m11
+#define sw4 m10
+#define sw3 m12
+#define sw2 m13
+#define sw1 m14
+
+; OUTPUTS
+#define east_set m40
+#define west_set m41
+#define ra_clamp m45
+
+#define five_degree_limit m8
+
+#define dec_preload m47
+
+#define in_focus  m36
+#define out_focus m37
+
+#define left_dome  m32
+#define right_dome m33
+
+#define in_baffle  m34
+#define out_baffle m35
+
+#define open_slit  m42
+#define close_slit m43
+
+#define open_mirror  m44
+#define close_mirror m46
+
+
+#define deadman       m38
+#define deadman_alive m4
+#define deadman_on    m3; deadman relay is actually on
+
+;----------------------------------------------------------------------------------
+;																p variables
+;----------------------------------------------------------------------------------
+#define one_second    p99;        -2258.650599853365; servo counts/second is 8388608/3713991*1000, minus for countdown timer.
+#define ra_track_on   p100;       0=off 1=on
+#define ra_track_mask p101;       0=inactive 1=active
+#define ra_guide_mask p102
+#define ra_set_mask   p103
+;#define ra_set_mask  M8001
+#define ra_track_rate p104;       0.6 is 15 arcsec/sec when jogging, otherwise 15 in motion program
+#define ra_guide_rate p105
+#define ra_set_rate   p106;       0.5625 is 1140 RPM DC motor, output of 3*1140/128 RPM, or 14.0625 arcsec/sec
+#define ra_accel      p107;       normal acceleration time is 1 sec
+#define ra_set_accel  p108;       fast acceleration of ~100ms needed for insertion of set motor
+#define ra_clamp_time p109;       Clamp release time during which motor spin-up is delayed
+#define seg_worm      p110;       absolute segment on 2-minute worm spline -- now reserved in RAM.pmc
+#define seg_inc       p111;       incremental segment -- now reserved in RAM.pmc
+#define seg_sync      p112;       hold synchronous segment for modulus -- now reserved in RAM.pmc
+#define ra_autoguide  p113;       autoguide increment in arcseconds
+#define ra_old_track_rate p114;   hold for comparison. Not used at the moment.
+#define ra_autoguide_dole p117;   dole out this amount for autoguiding
+#define ra_autoguide_abs  p118;   temp variable used in RAprog2 to avoid recomputing abs
+#define ra_mask       p119;
+#define ra_search_rate p120;
+#define ra_slew_rate  p121;
+#define ra_go         p122;
+#define qm_total_rate p123;       Temp variable for RA_SLEW
+#define qm_advance    p124;       Sidereal advance used during RA_SLEW with i5312 timer
+#define ra_swap       p125;       Swap I122 register in RA_SLEW for slow start that releases the clamps
+#define SUBVERT   p126;
+#define HA_POS    p127;
+#define TIMER_POS p128;           Was used in pre-ephemeris versions.
+#define OFFSET    p129;
+#define SUSPEND   p130;
+#define ha_start  p131;           Encoder safety variable to verify absolute encoders in RA_SLEW
+#define qm_start  p132;
+#define ha_idle   p133;           May want to zero at startup, but Track82 latches the differences with the absolutes anyway.
+#define qm_active p134;
+#define ha_latch  p135;
+#define qm_latch  p136;
+#define ha_total  p137;
+#define ra_base   p138;           offset for encoder verification code in RA_SLEW3
+#define ha_reg    p139;           register for ha_total to prevent reading a race condition
+#define race_base p140;           prevent race condition on ra_base and M362 in RA_SLEW3 and RAHA3.
+
+#define dec_track_on   p200;      0=off 1=on
+#define dec_track_mask p201;      0=inactive 1=active
+#define dec_mask       p202
+#define dec_track_rate p204;      0.109375 cts/ms is 1 arcsecond per second, i.e. 8400/76.8 for 8400ct encoder and 25/4*45/6 IM worm
+#define dec_guide_rate p205
+#define dec_set_rate   p206
+#define dec_current_track_rate p207; was for changing track rates on the fly.
+#define dec_search_rate p208
+#define dec_slew_rate   p209
+#define dec_go          p210;     use with M272 to queue jog for dec_go
+#define dec_step        p211;     Track82 sends stepdec to this register for digestion in motion control program.
+
+#define tube_position    p300;     1=E, -1=W
+#define total_rate       p301;     scratch variable for computing total rate from track, guide, set, tube variables
+#define track_host_alive p302;     track host deposits heartbeat code here
+#define worm_scratch     p303;     scratch variable for 2minuteworm
+#define pmac_status      p304;     pmac deposits status bits here for Track82 to read during heartbeat
+#define dog_scratch      p305;     scratch variable for dog
+#define pmac_status_hold p306;     copy of pmac_status saved by Track82 in case pmac_status changed before Track82 could zero it.
+#define dec_scratch      p307;     scratch for dec index plc
+#define safety_override  p308;     used in safety plc to override code in track_host_alive - each Track82 can set this, and should read it.
+#define man_alive p309;  Used in safety plc, combined with any overrides from Track82, to determine gate variables
+
+#define focus_track82_in  p310;   focus in command from Track82
+#define focus_track82_out p311;   focus out command from Track82
+
+#define alt_deadman1 P312;  Track82 keyboard deadman writes 0/1 every heartbeat, used for man_alive
+#define alt_deadman2 P313;  Each station using Track82 must define property stationP to one of these variables
+#define alt_deadman3 P314;  This uses the pulse method of ensuring safety - every command every heartbeat.
+#define alt_deadman4 P315;  Geobrick supports up to 4 sockets
+
+#define dome_track82_left  p316;  dome left command from Track82
+#define dome_track82_right p317;  dome right command from Track82
+
+#define guide  p320;              alternate way for Track82 to entice a PLC
+#define set    p321
+#define search p322
+#define slew   p323
+#define north  p324
+#define south  p325
+#define east   p326
+#define west   p327
+
+#define gate_mirror p330
+#define gate_set    p331
+#define gate_search p332;         safety masks
+#define gate_slew   p333
+#define gate_track  p334;         applies to track and guide
+#define gate_dome   p335;
+#define stop_nmi    p336;         non-maskable gate to collision, hold collision status until cleared no matter what Track82 says.
+
+#define ra_fe       p350;         ra following error on 2-minute worm
+#define dec_fe      p351;         dec following error
+#define ra_current  p352;         ra motor current
+#define dec_current p353;         dec motor current
+#define average_count p354;       number of data added to fe/current registers, 0 says clear ra_fe, dec_fe, ra_current, dec_current
+#define diagnostic_latch p355;    set to -1 to stop data collection
+
+#define baffle_track82_in    p360;
+#define baffle_track82_out   p361
+#define slit_track82_open    p362
+#define slit_track82_close   p363
+#define mirror_track82_open  p364
+#define mirror_track82_close p365
+
+#define mcdversion p399
+
+;Dome Variables
+#define err_sw   P1010; is 0 for OK, 1 for error from multiple switches or missed switches
+#define bit_sw   P1011; is the bit-encoded list of switches currently on
+#define curr_sw  P1012; is the current non-zero switch
+#define last_sw  P1013; is the last non-zero switch
+#define delta_sw P1014; is the difference, normally 1 or -1, between current and last, modulo 5.
+#define azimuth  P1015; is azimuth
+#define first_sw P1016; first switch encountered.
